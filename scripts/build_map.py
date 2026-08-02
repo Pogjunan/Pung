@@ -12,23 +12,34 @@ import folium
 import pandas as pd
 from folium import plugins
 
-REQUIRED = {
-    "split", "station", "latitude_deg", "longitude_deg",
-    "coordinate_source", "status",
+REQUIRED_COLUMNS = {
+    "split",
+    "station",
+    "latitude_deg",
+    "longitude_deg",
+    "coordinate_source",
+    "status",
 }
-TRAIN = "#d73027"
-TEST = "#4575b4"
-GRAY = "#666666"
+
+TRAIN_COLOR = "#d73027"
+TEST_COLOR = "#4575b4"
+NWP_ONLY_COLOR = "#666666"
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
-    p.add_argument("--input", type=Path, default=Path("40m_WRF_WS_공간목록.csv"))
-    p.add_argument("--output", type=Path, default=Path("_site"))
-    return p.parse_args()
+    parser = argparse.ArgumentParser(
+        description="Build an interactive map of nominal wind-station coordinates."
+    )
+    parser.add_argument(
+        "--input",
+        type=Path,
+        default=Path("40m_WRF_WS_공간목록.csv"),
+    )
+    parser.add_argument("--output", type=Path, default=Path("_site"))
+    return parser.parse_args()
 
 
-def split_norm(value: Any) -> str:
+def normalize_split(value: Any) -> str:
     text = str(value).strip().lower()
     if text in {"tr", "train", "training"}:
         return "tr"
@@ -37,191 +48,378 @@ def split_norm(value: Any) -> str:
     return "unknown"
 
 
-def source_norm(value: Any) -> str:
+def normalize_source(value: Any) -> str:
     if pd.isna(value):
         return "UNKNOWN"
     text = str(value).strip().upper()
-    return {
-        "FLS": "FLS_HEADER", "HEADER": "FLS_HEADER",
-        "LEGACY": "LEGACY_CODE", "CODE": "LEGACY_CODE",
-        "": "UNKNOWN", "NAN": "UNKNOWN", "NONE": "UNKNOWN",
-    }.get(text, text)
+    aliases = {
+        "FLS": "FLS_HEADER",
+        "HEADER": "FLS_HEADER",
+        "RAW_HEADER": "FLS_HEADER",
+        "LEGACY": "LEGACY_CODE",
+        "CODE": "LEGACY_CODE",
+        "": "UNKNOWN",
+        "NAN": "UNKNOWN",
+        "NONE": "UNKNOWN",
+    }
+    return aliases.get(text, text)
 
 
-def valid_coordinate(lat: Any, lon: Any) -> bool:
+def is_valid_coordinate(lat: Any, lon: Any) -> bool:
     try:
-        lat = float(lat)
-        lon = float(lon)
+        latitude = float(lat)
+        longitude = float(lon)
     except (TypeError, ValueError):
         return False
-    return math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180
+    return (
+        math.isfinite(latitude)
+        and math.isfinite(longitude)
+        and -90.0 <= latitude <= 90.0
+        and -180.0 <= longitude <= 180.0
+    )
 
 
-def normalize(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [str(c).strip() for c in df.columns]
-    missing = REQUIRED - set(df.columns)
+def normalize_table(frame: pd.DataFrame) -> pd.DataFrame:
+    frame = frame.copy()
+    frame.columns = [str(column).strip() for column in frame.columns]
+
+    missing = REQUIRED_COLUMNS.difference(frame.columns)
     if missing:
         raise ValueError(f"Missing required columns: {sorted(missing)}")
-    df["station"] = df["station"].astype(str).str.strip()
-    if df["station"].duplicated().any():
-        raise ValueError("Duplicate station IDs found")
-    df["split"] = df["split"].map(split_norm)
-    df["coordinate_source"] = df["coordinate_source"].map(source_norm)
-    df["status"] = df["status"].fillna("UNKNOWN").astype(str)
-    df["latitude_deg"] = pd.to_numeric(df["latitude_deg"], errors="coerce")
-    df["longitude_deg"] = pd.to_numeric(df["longitude_deg"], errors="coerce")
-    df["coordinate_valid"] = [
-        valid_coordinate(lat, lon)
-        for lat, lon in zip(df["latitude_deg"], df["longitude_deg"])
+
+    frame["station"] = frame["station"].astype(str).str.strip()
+    if frame["station"].eq("").any():
+        raise ValueError("Blank station ID found")
+    if frame["station"].duplicated().any():
+        duplicated = frame.loc[
+            frame["station"].duplicated(keep=False), "station"
+        ].tolist()
+        raise ValueError(f"Duplicate station IDs found: {duplicated}")
+
+    frame["split"] = frame["split"].map(normalize_split)
+    frame["coordinate_source"] = frame["coordinate_source"].map(
+        normalize_source
+    )
+    frame["status"] = frame["status"].fillna("UNKNOWN").astype(str).str.strip()
+    frame["latitude_deg"] = pd.to_numeric(
+        frame["latitude_deg"], errors="coerce"
+    )
+    frame["longitude_deg"] = pd.to_numeric(
+        frame["longitude_deg"], errors="coerce"
+    )
+    frame["coordinate_valid"] = [
+        is_valid_coordinate(lat, lon)
+        for lat, lon in zip(frame["latitude_deg"], frame["longitude_deg"])
     ]
-    df["is_nwp_only"] = df["status"].str.upper().str.contains("NWP_ONLY_NO_GT", regex=False)
-    for col, default in [
-        ("candidate_pair_count_wrf_plus9h", pd.NA),
-        ("korean_name", pd.NA),
-        ("note", ""),
-    ]:
-        if col not in df.columns:
-            df[col] = default
-    df["korean_name"] = df["korean_name"].fillna(df["station"])
-    return df
+    frame["is_nwp_only"] = frame["status"].str.upper().str.contains(
+        "NWP_ONLY_NO_GT", regex=False
+    )
+
+    defaults: dict[str, Any] = {
+        "candidate_pair_count_wrf_plus9h": pd.NA,
+        "korean_name": pd.NA,
+        "note": "",
+        "physical_site_group": pd.NA,
+    }
+    for column, default in defaults.items():
+        if column not in frame.columns:
+            frame[column] = default
+
+    frame["korean_name"] = frame["korean_name"].fillna(frame["station"])
+    frame["physical_site_group"] = frame["physical_site_group"].fillna(
+        frame["station"]
+    )
+    return frame
 
 
-def svg(shape: str, color: str, filled: bool) -> str:
+def value_counts_dict(series: pd.Series) -> dict[str, int]:
+    """Convert pandas/NumPy counts to JSON-safe Python integers."""
+    return {
+        str(key): int(value)
+        for key, value in series.value_counts(dropna=False).items()
+    }
+
+
+def marker_svg(shape: str, color: str, filled: bool) -> str:
     fill = color if filled else "white"
     opacity = "0.94" if filled else "0.05"
+    common = (
+        f'fill="{fill}" fill-opacity="{opacity}" '
+        f'stroke="{color}" stroke-width="3"'
+    )
+
     if shape == "circle":
-        body = f'<circle cx="13" cy="13" r="8" fill="{fill}" fill-opacity="{opacity}" stroke="{color}" stroke-width="3"/>'
+        body = f'<circle cx="13" cy="13" r="8" {common}/>'
     elif shape == "triangle":
-        body = f'<polygon points="13,3 23,22 3,22" fill="{fill}" fill-opacity="{opacity}" stroke="{color}" stroke-width="3"/>'
+        body = f'<polygon points="13,3 23,22 3,22" {common}/>'
     else:
-        body = f'<polygon points="13,2 24,13 13,24 2,13" fill="{fill}" fill-opacity="{opacity}" stroke="{color}" stroke-width="3"/>'
-    return f'<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26">{body}</svg>'
+        body = f'<polygon points="13,2 24,13 13,24 2,13" {common}/>'
+
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" '
+        'width="26" height="26" viewBox="0 0 26 26" '
+        'style="filter:drop-shadow(0 1px 1px rgba(0,0,0,.35))">'
+        f"{body}</svg>"
+    )
 
 
-def style(row: pd.Series) -> tuple[str, str, bool]:
+def marker_style(row: pd.Series) -> tuple[str, str, bool]:
     if bool(row["is_nwp_only"]):
-        return "diamond", GRAY, True
-    shape = "circle" if row["split"] == "tr" else "triangle"
-    color = TRAIN if row["split"] == "tr" else TEST
-    filled = row["coordinate_source"] == "FLS_HEADER"
-    return shape, color, filled
+        return "diamond", NWP_ONLY_COLOR, True
+    if row["split"] == "tr":
+        return (
+            "circle",
+            TRAIN_COLOR,
+            row["coordinate_source"] == "FLS_HEADER",
+        )
+    if row["split"] == "ve":
+        return (
+            "triangle",
+            TEST_COLOR,
+            row["coordinate_source"] == "FLS_HEADER",
+        )
+    return "diamond", "#111111", False
 
 
-def popup(row: pd.Series) -> str:
-    pair = row["candidate_pair_count_wrf_plus9h"]
-    pair_text = "NA" if pd.isna(pair) else html.escape(str(pair))
-    note = html.escape(str(row.get("note", "") or ""))
+def popup_html(row: pd.Series) -> str:
+    pair_count = row["candidate_pair_count_wrf_plus9h"]
+    pair_text = "NA" if pd.isna(pair_count) else html.escape(str(pair_count))
+
+    raw_note = row.get("note", "")
+    note = "" if pd.isna(raw_note) else str(raw_note).strip()
+    note_text = html.escape(note) if note else "—"
+
     return f"""
-    <div style='width:340px;font-family:Arial,sans-serif'>
-      <h3 style='margin:0 0 8px'>{html.escape(str(row['korean_name']))}</h3>
+    <div style="width:350px;font-family:Arial,'Noto Sans KR',sans-serif">
+      <h3 style="margin:0 0 8px">{html.escape(str(row['korean_name']))}</h3>
       <b>station:</b> <code>{html.escape(str(row['station']))}</code><br>
+      <b>physical_site_group:</b>
+      {html.escape(str(row['physical_site_group']))}<br>
       <b>split:</b> {html.escape(str(row['split']))}<br>
-      <b>nominal coordinate:</b> {row['latitude_deg']:.6f}, {row['longitude_deg']:.6f}<br>
-      <b>coordinate_source:</b> {html.escape(str(row['coordinate_source']))}<br>
+      <b>nominal coordinate:</b>
+      {float(row['latitude_deg']):.6f}, {float(row['longitude_deg']):.6f}<br>
+      <b>coordinate_source:</b>
+      {html.escape(str(row['coordinate_source']))}<br>
       <b>status:</b> {html.escape(str(row['status']))}<br>
       <b>candidate_pair_count_wrf_plus9h:</b> {pair_text}<br>
-      <b>note:</b> {note or '—'}
+      <b>note:</b> {note_text}
       <hr>
-      <b style='color:#a40000'>Actual WRF grid coordinate: UNKNOWN</b><br>
-      <small>This marker is a nominal station coordinate, not the exact WRF extraction grid.</small>
+      <b style="color:#a40000">Actual WRF grid coordinate: UNKNOWN</b><br>
+      <small>
+        This marker is a nominal station coordinate, not the exact WRF
+        extraction grid or a verified individual turbine coordinate.
+      </small>
     </div>
     """
 
 
-def add_panel(m: folium.Map, omitted: list[str]) -> None:
+def add_information_panels(
+    map_object: folium.Map,
+    omitted: list[str],
+    frame: pd.DataFrame,
+) -> None:
     omitted_text = ", ".join(omitted) if omitted else "none"
+    split_counts = value_counts_dict(frame["split"])
+    source_counts = value_counts_dict(frame["coordinate_source"])
+
     panel = f"""
-    <div style='position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9999;
-                background:white;border:1px solid #777;border-radius:8px;padding:9px 14px;
-                box-shadow:0 1px 5px rgba(0,0,0,.25);font-family:Arial,sans-serif;text-align:center'>
-      <b>40m station nominal locations</b><br>
-      <small>Train=red circle · Verification=blue triangle · FLS_HEADER=filled · LEGACY_CODE=hollow</small>
+    <div style="position:fixed;top:12px;left:50%;transform:translateX(-50%);
+                z-index:9999;background:rgba(255,255,255,.96);
+                border:1px solid #777;border-radius:8px;padding:9px 14px;
+                box-shadow:0 1px 5px rgba(0,0,0,.25);
+                font-family:Arial,'Noto Sans KR',sans-serif;text-align:center">
+      <b>40 m station nominal locations</b><br>
+      <small>
+        Train=red circle · Verification=blue triangle ·
+        FLS_HEADER=filled · LEGACY_CODE=hollow
+      </small>
     </div>
-    <div style='position:fixed;bottom:28px;left:12px;z-index:9999;background:white;border:1px solid #777;
-                border-radius:7px;padding:10px;font:12px Arial,sans-serif'>
+
+    <div style="position:fixed;bottom:28px;left:12px;z-index:9999;
+                background:rgba(255,255,255,.96);border:1px solid #777;
+                border-radius:7px;padding:10px;
+                font:12px Arial,'Noto Sans KR',sans-serif">
       <b>Interpretation</b><br>
       Plotted: nominal station coordinates<br>
       WRF grid: UNKNOWN / not plotted<br>
-      Omitted: {html.escape(omitted_text)}
+      Omitted: {html.escape(omitted_text)}<br>
+      Split counts: {html.escape(str(split_counts))}<br>
+      Source counts: {html.escape(str(source_counts))}
     </div>
     """
-    m.get_root().html.add_child(folium.Element(panel))
+    map_object.get_root().html.add_child(folium.Element(panel))
 
 
-def placeholder(output: Path, reason: str) -> None:
-    output.mkdir(parents=True, exist_ok=True)
-    page = f"""<!doctype html><html lang='ko'><meta charset='utf-8'>
-    <title>Wind station map setup</title>
-    <style>body{{font-family:system-ui;max-width:850px;margin:60px auto;padding:0 20px;line-height:1.6}}
-    code,pre{{background:#f5f5f5;padding:3px 6px;border-radius:5px}}pre{{padding:16px;overflow:auto}}</style>
-    <h1>40 m Wind Station Map</h1>
-    <p>지도를 생성하려면 저장소 루트에 <code>40m_WRF_WS_공간목록.csv</code>를 추가하세요.</p>
-    <p><b>현재 상태:</b> {html.escape(reason)}</p>
-    <pre>git add 40m_WRF_WS_공간목록.csv
+def write_placeholder(output_directory: Path, reason: str) -> None:
+    output_directory.mkdir(parents=True, exist_ok=True)
+    page = f"""<!doctype html>
+    <html lang="ko">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      <title>Wind station map setup</title>
+      <style>
+        body{{font-family:system-ui;max-width:850px;margin:60px auto;
+             padding:0 20px;line-height:1.6}}
+        code,pre{{background:#f5f5f5;padding:3px 6px;border-radius:5px}}
+        pre{{padding:16px;overflow:auto}}
+      </style>
+    </head>
+    <body>
+      <h1>40 m Wind Station Map</h1>
+      <p>저장소 루트에 <code>40m_WRF_WS_공간목록.csv</code>를 추가하세요.</p>
+      <p><b>현재 상태:</b> {html.escape(reason)}</p>
+      <pre>git add 40m_WRF_WS_공간목록.csv
 git commit -m "Add station coordinate registry"
 git push</pre>
-    <p>push 후 GitHub Actions가 자동으로 동적 지도를 다시 배포합니다.</p>
+      <p>push 후 GitHub Actions가 동적 지도를 다시 배포합니다.</p>
+    </body>
     </html>"""
-    (output / "index.html").write_text(page, encoding="utf-8")
-    (output / "build_summary.json").write_text(json.dumps({"status": "placeholder", "reason": reason}, ensure_ascii=False, indent=2), encoding="utf-8")
+    (output_directory / "index.html").write_text(page, encoding="utf-8")
+    (output_directory / ".nojekyll").write_text("", encoding="utf-8")
+    summary = {"status": "placeholder", "reason": reason}
+    (output_directory / "build_summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
-def build(df: pd.DataFrame, output: Path) -> None:
-    output.mkdir(parents=True, exist_ok=True)
-    plotted = df[df["coordinate_valid"]].copy()
-    omitted = df.loc[~df["coordinate_valid"], "station"].astype(str).tolist()
-    m = folium.Map(location=[36.1, 127.6], zoom_start=7, tiles="CartoDB positron", control_scale=True)
+def build_site(frame: pd.DataFrame, output_directory: Path) -> None:
+    output_directory.mkdir(parents=True, exist_ok=True)
+
+    plotted = frame.loc[frame["coordinate_valid"]].copy()
+    omitted = frame.loc[
+        ~frame["coordinate_valid"], "station"
+    ].astype(str).tolist()
+
+    map_object = folium.Map(
+        location=[36.1, 127.6],
+        zoom_start=7,
+        tiles="CartoDB positron",
+        control_scale=True,
+    )
+
     layers = {
-        "tr": folium.FeatureGroup(name=f"Train ({(plotted['split']=='tr').sum()})", show=True),
-        "ve": folium.FeatureGroup(name=f"Verification ({(plotted['split']=='ve').sum()})", show=True),
-        "nwp": folium.FeatureGroup(name=f"NWP only ({plotted['is_nwp_only'].sum()})", show=True),
+        "tr": folium.FeatureGroup(
+            name=f"Train ({int((plotted['split'] == 'tr').sum())})",
+            show=True,
+        ),
+        "ve": folium.FeatureGroup(
+            name=f"Verification ({int((plotted['split'] == 've').sum())})",
+            show=True,
+        ),
+        "nwp": folium.FeatureGroup(
+            name=f"NWP only ({int(plotted['is_nwp_only'].sum())})",
+            show=True,
+        ),
+        "unknown": folium.FeatureGroup(
+            name=f"Unknown split ({int((plotted['split'] == 'unknown').sum())})",
+            show=False,
+        ),
     }
+
     for _, row in plotted.iterrows():
-        shape, color, filled = style(row)
-        icon = folium.DivIcon(html=svg(shape, color, filled), icon_size=(26, 26), icon_anchor=(13, 13))
-        target = layers["nwp"] if row["is_nwp_only"] else layers.get(row["split"], m)
+        shape, color, filled = marker_style(row)
+        icon = folium.DivIcon(
+            html=marker_svg(shape, color, filled),
+            icon_size=(26, 26),
+            icon_anchor=(13, 13),
+            class_name="station-svg-marker",
+        )
+
+        if bool(row["is_nwp_only"]):
+            target = layers["nwp"]
+        elif row["split"] in {"tr", "ve"}:
+            target = layers[str(row["split"])]
+        else:
+            target = layers["unknown"]
+
         folium.Marker(
-            [float(row["latitude_deg"]), float(row["longitude_deg"])],
-            tooltip=f"{row['korean_name']} | {row['station']} | {row['coordinate_source']}",
-            popup=folium.Popup(popup(row), max_width=390),
+            location=[
+                float(row["latitude_deg"]),
+                float(row["longitude_deg"]),
+            ],
+            tooltip=(
+                f"{row['korean_name']} | {row['station']} | "
+                f"{row['coordinate_source']}"
+            ),
+            popup=folium.Popup(popup_html(row), max_width=410),
             icon=icon,
         ).add_to(target)
+
     for layer in layers.values():
-        layer.add_to(m)
+        layer.add_to(map_object)
+
     if not plotted.empty:
-        m.fit_bounds(plotted[["latitude_deg", "longitude_deg"]].astype(float).values.tolist(), padding=(25, 25))
-    plugins.Fullscreen(position="topright").add_to(m)
-    plugins.MeasureControl(position="topright", primary_length_unit="kilometers").add_to(m)
-    plugins.MousePosition(position="bottomright", prefix="lat/lon:", num_digits=6).add_to(m)
-    folium.LayerControl(collapsed=False).add_to(m)
-    add_panel(m, omitted)
-    m.save(str(output / "index.html"))
-    df.to_csv(output / "station_coordinate_audit.csv", index=False, encoding="utf-8-sig")
+        bounds = plotted[["latitude_deg", "longitude_deg"]].astype(float)
+        map_object.fit_bounds(bounds.values.tolist(), padding=(25, 25))
+
+    plugins.Fullscreen(position="topright").add_to(map_object)
+    plugins.MeasureControl(
+        position="topright",
+        primary_length_unit="kilometers",
+    ).add_to(map_object)
+    plugins.MousePosition(
+        position="bottomright",
+        prefix="lat/lon:",
+        num_digits=6,
+    ).add_to(map_object)
+    folium.LayerControl(collapsed=False).add_to(map_object)
+    add_information_panels(map_object, omitted, frame)
+
+    map_object.save(str(output_directory / "index.html"))
+    (output_directory / ".nojekyll").write_text("", encoding="utf-8")
+    frame.to_csv(
+        output_directory / "station_coordinate_audit.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
     summary = {
         "status": "ok",
-        "rows": int(len(df)),
-        "split_counts": df["split"].value_counts(dropna=False).to_dict(),
-        "coordinate_source_counts": df["coordinate_source"].value_counts(dropna=False).to_dict(),
-        "coordinate_valid": int(df["coordinate_valid"].sum()),
+        "rows": int(len(frame)),
+        "split_counts": value_counts_dict(frame["split"]),
+        "coordinate_source_counts": value_counts_dict(
+            frame["coordinate_source"]
+        ),
+        "status_counts": value_counts_dict(frame["status"]),
+        "coordinate_valid": int(frame["coordinate_valid"].sum()),
+        "coordinate_invalid": int((~frame["coordinate_valid"]).sum()),
+        "nwp_only": int(frame["is_nwp_only"].sum()),
         "omitted": omitted,
         "plotted_semantics": "station nominal coordinate",
         "wrf_grid_semantics": "UNKNOWN_NOT_PLOTTED",
     }
-    (output / "build_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    (output_directory / "build_summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def main() -> None:
     args = parse_args()
+
     if not args.input.is_file():
-        placeholder(args.output, f"input file not found: {args.input}")
+        write_placeholder(
+            args.output,
+            f"input file not found: {args.input}",
+        )
         print(f"[WARN] {args.input} not found; placeholder site generated")
         return
-    df = normalize(pd.read_csv(args.input, encoding="utf-8-sig"))
-    build(df, args.output)
+
+    frame = normalize_table(pd.read_csv(args.input, encoding="utf-8-sig"))
+    build_site(frame, args.output)
+
     print("[OK] site generated:", args.output)
-    print("[INFO] split counts:", df["split"].value_counts().to_dict())
-    print("[INFO] source counts:", df["coordinate_source"].value_counts().to_dict())
+    print("[INFO] split counts:", value_counts_dict(frame["split"]))
+    print(
+        "[INFO] source counts:",
+        value_counts_dict(frame["coordinate_source"]),
+    )
+    print(
+        "[INFO] omitted:",
+        frame.loc[~frame["coordinate_valid"], "station"].tolist(),
+    )
 
 
 if __name__ == "__main__":
