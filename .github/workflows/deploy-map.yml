@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -35,17 +35,41 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Compile map builder
+        run: python -m py_compile scripts/build_map.py
+
       - name: Build dynamic map
         run: |
           python scripts/build_map.py \
             --input 40m_WRF_WS_공간목록.csv \
             --output _site
 
-      - name: Configure Pages
+      - name: Validate generated site
+        run: |
+          test -s _site/index.html
+          test -s _site/build_summary.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          summary = json.loads(Path("_site/build_summary.json").read_text(encoding="utf-8"))
+          print(json.dumps(summary, ensure_ascii=False, indent=2))
+          if summary.get("status") not in {"ok", "placeholder"}:
+              raise SystemExit("Unexpected build status")
+          PY
+
+      - name: Upload diagnostic build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wind-station-map-build
+          path: _site
+          retention-days: 14
+
+      - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
         with:
           path: _site
 
