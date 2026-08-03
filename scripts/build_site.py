@@ -54,18 +54,38 @@ def main() -> None:
         encoding="ascii"
     ).strip()
     payload = json.loads(
-        gzip.decompress(
-            base64.b64decode(encoded_payload)
-        ).decode("utf-8")
+        gzip.decompress(base64.b64decode(encoded_payload)).decode("utf-8")
     )
-    if payload.get("schema_version") != 2:
+    if payload.get("schema_version") != 3:
         raise ValueError("Unsupported availability schema version")
-    if payload.get("encoding") != "per_group_inclusive_day_index_runs":
+    if payload.get("encoding") != "per_station_inclusive_day_index_runs":
         raise ValueError("Unsupported availability encoding")
+    if payload.get("record_grain") != "station_column":
+        raise ValueError("Availability data is not station-column level")
     if not payload.get("groups"):
-        raise ValueError("Availability data contains no groups")
-    if not all("on_day_runs" in group for group in payload["groups"]):
-        raise ValueError("Availability groups contain no ON-day runs")
+        raise ValueError("Availability data contains no station records")
+    if not all(
+        record.get("station") and record.get("on_day_runs")
+        for record in payload["groups"]
+    ):
+        raise ValueError(
+            "Availability contains a station with no ON-day runs"
+        )
+
+    counts = payload.get("counts", {})
+    expected_counts = {
+        "station_ids": 43,
+        "train_station_ids": 22,
+        "verify_station_ids": 21,
+        "mapped_station_ids": 42,
+        "physical_site_groups": 39,
+    }
+    for key, expected in expected_counts.items():
+        actual = counts.get(key)
+        if actual != expected:
+            raise ValueError(
+                f"Unexpected {key}: expected={expected}, actual={actual}"
+            )
 
     output = args.output
     if output.exists():
@@ -107,11 +127,7 @@ def main() -> None:
             shutil.move(str(source), str(output / target_name))
     shutil.rmtree(nominal_temp)
 
-    shutil.copytree(
-        args.web_root,
-        output,
-        dirs_exist_ok=True,
-    )
+    shutil.copytree(args.web_root, output, dirs_exist_ok=True)
     data_output = output / "data"
     data_output.mkdir(exist_ok=True)
     shutil.copy2(
@@ -127,11 +143,17 @@ def main() -> None:
             "nominal": "nominal.html",
             "availability": "availability.html",
         },
-        "availability": payload["counts"],
+        "availability": counts,
+        "availability_grain": payload["record_grain"],
         "source_range": {
             "start": payload["time"]["source_start"],
             "end": payload["time"]["source_end"],
         },
+        "default_range": {
+            "start": payload["time"]["default_start"],
+            "end": payload["time"]["default_end"],
+        },
+        "playback_mode": payload["time"]["playback_mode"],
     }
     (output / "site_build_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2),
