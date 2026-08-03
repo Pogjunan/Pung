@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>40 m 풍속 관측 지도</title>
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body class="dashboard-body">
+  <header class="dashboard-header">
+    <div class="dashboard-brand">
+      <strong>40 m 풍속 관측 지도</strong>
+      <span>Nominal location & temporal availability</span>
+    </div>
+    <nav class="dashboard-tabs" aria-label="지도 선택">
+      <button type="button" data-view="nominal">
+        명목 관측소 위치
+      </button>
+      <button type="button" data-view="availability">
+        시간에 따른 실제 풍속 관측여부
+      </button>
+    </nav>
+    <a id="open-current" class="open-current" href="nominal.html"
+       target="_blank" rel="noopener">새 탭</a>
+  </header>
+  <main class="dashboard-main">
+    <iframe id="map-frame" title="풍속 관측 지도"></iframe>
+  </main>
+  <script src="assets/dashboard.js"></script>
+</body>
+</html>
