@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>전체 WS 관측기간</title>
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="preconnect" href="https://basemaps.cartocdn.com">
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  >
+  <link rel="stylesheet" href="assets/site.css?v=20260803-all-ws-1">
+  <link rel="stylesheet" href="assets/availability-map-fix.css?v=20260803-all-ws-1">
+  <link rel="stylesheet" href="assets/full-history.css?v=20260803-all-ws-1">
+</head>
+<body class="availability-body full-history-body">
+  <div id="availability-map" aria-label="대한민국 전체 WS 관측기간 지도"></div>
+
+  <section class="availability-header" aria-live="polite">
+    <div>
+      <h1>전체 WS 관측기간</h1>
+      <p>1990-01-01부터 전체 station의 일별 관측 이력</p>
+    </div>
+    <div class="header-stats">
+      <span id="current-date">—</span>
+      <span id="active-total">ON —</span>
+      <span id="ever-on" class="coverage-ok">EVER ON —</span>
+      <span id="active-train">TRAIN —</span>
+      <span id="active-verify">VERIFY —</span>
+    </div>
+  </section>
+
+  <aside class="availability-note full-history-note">
+    <strong>전체 WS 열 검증</strong>
+    <span>TRAIN 22개 + VERIFY 21개 = 43개 station 열</span>
+    <span>ON = 해당 날짜에 non-null WS가 1시간 이상 존재</span>
+    <span>회색 = 원본 시작 전, 속 빈 색상 = 원본 기간 안에서 OFF</span>
+    <span id="data-range">자료 범위 —</span>
+    <span id="coverage-audit">관측 이력 검증 —</span>
+    <span id="unmapped-groups">좌표 미확인 —</span>
+  </aside>
+
+  <section class="timeline-panel">
+    <div class="timeline-main-row">
+      <button id="previous-day" type="button" title="이전 날짜">◀</button>
+      <button id="play-toggle" type="button" class="play-button"
+              title="상태 변화 날짜 재생 또는 일시정지">▶</button>
+      <button id="next-day" type="button" title="다음 날짜">▶|</button>
+      <input id="date-slider" type="range" min="0" max="0" value="0"
+             step="1" aria-label="날짜">
+      <output id="slider-date">—</output>
+    </div>
+    <div class="timeline-options-row">
+      <div class="timeline-mode-note">
+        슬라이더·화살표는 1일 단위 · 재생은 ON/OFF 변화 날짜로 이동
+      </div>
+      <div class="speed-control" aria-label="재생 속도">
+        <span>속도</span>
+        <button type="button" data-speed="0.5">0.5×</button>
+        <button type="button" data-speed="1" class="active">1×</button>
+        <button type="button" data-speed="2">2×</button>
+        <button type="button" data-speed="3">3×</button>
+        <button type="button" data-speed="4">4×</button>
+        <button type="button" data-speed="5">5×</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="loading-panel" class="loading-panel">
+    전체 WS 관측 이력을 불러오는 중입니다.
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9coqIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="assets/availability-all.js?v=20260803-all-ws-1"></script>
+</body>
+</html>
