@@ -1,6 +1,6 @@
 "use strict";
 
-const BUILD_VERSION = "20260803-korea-map-1";
+const BUILD_VERSION = "20260803-station-timeline-2";
 
 const views = {
   nominal: {
