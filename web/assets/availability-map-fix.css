@@ -1,10 +1,8 @@
 /*
- * Availability map hardening.
- *
- * Leaflet tiles must keep their own absolute positioning and 256 px size.
- * These rules protect the map from dashboard/global image styles and make the
- * iframe viewport deterministic. The visible world is constrained in JS to
- * the Korean Peninsula and nearby seas.
+ * Extra layout protection for the temporal Leaflet map.
+ * The official Leaflet stylesheet remains the source of map positioning;
+ * these rules only stabilize the full-viewport iframe and prevent generic
+ * responsive-image rules from resizing map tiles.
  */
 html,
 body.availability-body {
@@ -29,7 +27,6 @@ body.availability-body {
   min-height: 420px;
   overflow: hidden;
   background: #dfe6ec;
-  isolation: isolate;
 }
 
 #availability-map.leaflet-container {
@@ -38,31 +35,12 @@ body.availability-body {
     BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-/* Never let generic responsive-image rules resize or reflow Leaflet tiles. */
 #availability-map img.leaflet-tile {
-  position: absolute !important;
-  width: 256px !important;
-  height: 256px !important;
   max-width: none !important;
   max-height: none !important;
-  min-width: 0 !important;
-  min-height: 0 !important;
   margin: 0 !important;
   padding: 0 !important;
   border: 0 !important;
-  object-fit: fill !important;
-}
-
-#availability-map .leaflet-tile-pane,
-#availability-map .leaflet-tile-container,
-#availability-map .leaflet-map-pane,
-#availability-map .leaflet-marker-pane,
-#availability-map .leaflet-overlay-pane,
-#availability-map .leaflet-shadow-pane,
-#availability-map .leaflet-tooltip-pane,
-#availability-map .leaflet-popup-pane {
-  position: absolute;
-  inset: 0 auto auto 0;
 }
 
 #availability-map .leaflet-control-layers {
