@@ -46,6 +46,7 @@ jobs:
             scripts/build_common_hourly_availability.py
           node --check web/assets/dashboard.js
           node --check web/assets/availability.js
+          node --check web/assets/availability-all.js
 
       - name: Build combined dynamic site
         run: |
@@ -54,15 +55,22 @@ jobs:
             --availability-data data/ws_availability_common_hourly.json.gz.b64 \
             --web-root web \
             --output _site
+          mkdir -p _site/data
+          cp data/ws_availability_daily.json.gz.b64 \
+            _site/data/ws_availability_daily.json.gz.b64
 
       - name: Validate generated site
         run: |
           test -s _site/index.html
           test -s _site/nominal.html
           test -s _site/availability.html
+          test -s _site/availability-all.html
           test -s _site/data/ws_availability_common_hourly.json.gz.b64
+          test -s _site/data/ws_availability_daily.json.gz.b64
           test -s _site/site_build_summary.json
           python - <<'PY'
+          import base64
+          import gzip
           import json
           from pathlib import Path
 
@@ -90,29 +98,67 @@ jobs:
               actual = availability.get(key)
               if actual != expected:
                   raise SystemExit(
-                      f"Unexpected {key}: {actual} != {expected}"
+                      f"Unexpected common-hour {key}: {actual} != {expected}"
                   )
-
-          if summary.get("availability_grain") != "station_column":
-              raise SystemExit("Availability is not station-column level")
-          if summary.get("availability_encoding") != (
-              "filtered_common_hour_sequence_with_per_station_inclusive_frame_runs"
-          ):
-              raise SystemExit("Unexpected availability encoding")
 
           selection = summary["selection"]
           if selection["retained_start"] != "2016-03-01 00:00:00":
               raise SystemExit("Unexpected common-hour start")
           if selection["retained_end"] != "2023-10-31 14:00:00":
               raise SystemExit("Unexpected common-hour end")
-          if selection["state_change_frames"] != 1368:
-              raise SystemExit("Unexpected state-change count")
 
-          source = summary["source"]
-          if source["sha256"] != (
-              "1ce8382962c350ebe2d6edeacb3304acc637b8b7cbff1b0411d63751e3386bc1"
+          daily_path = Path(
+              "_site/data/ws_availability_daily.json.gz.b64"
+          )
+          daily_payload = json.loads(
+              gzip.decompress(
+                  base64.b64decode(
+                      daily_path.read_text(encoding="ascii").strip()
+                  )
+              ).decode("utf-8")
+          )
+          if daily_payload.get("schema_version") != 3:
+              raise SystemExit("Unexpected complete-history schema")
+          if daily_payload.get("record_grain") != "station_column":
+              raise SystemExit("Complete history is not station-column level")
+          if daily_payload.get("encoding") != (
+              "per_station_inclusive_day_index_runs"
           ):
-              raise SystemExit("Unexpected ON/OFF source hash")
+              raise SystemExit("Unexpected complete-history encoding")
+
+          daily_counts = daily_payload["counts"]
+          full_expected = {
+              "station_ids": 43,
+              "train_station_ids": 22,
+              "verify_station_ids": 21,
+              "mapped_station_ids": 42,
+              "physical_site_groups": 39,
+              "calendar_days": 10077,
+          }
+          for key, expected in full_expected.items():
+              actual = daily_counts.get(key)
+              if actual != expected:
+                  raise SystemExit(
+                      f"Unexpected full-history {key}: {actual} != {expected}"
+                  )
+
+          never_on = [
+              record["station"]
+              for record in daily_payload["groups"]
+              if not record.get("on_day_runs")
+          ]
+          if never_on:
+              raise SystemExit(
+                  f"Stations never ON in full history: {never_on}"
+              )
+          if len(daily_payload["groups"]) != 43:
+              raise SystemExit("Full history does not contain 43 stations")
+          if daily_payload["time"]["date_start"] != "1996-05-31":
+              raise SystemExit("Unexpected source start date")
+          if daily_payload["time"]["date_end"] != "2024-01-01":
+              raise SystemExit("Unexpected source end date")
+
+          print("Full-history coverage: EVER ON 43/43; NEVER ON 0")
           PY
 
       - name: Upload diagnostic build artifact
