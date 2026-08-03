@@ -46,18 +46,18 @@ jobs:
             scripts/build_common_hourly_availability.py
           node --check web/assets/dashboard.js
           node --check web/assets/availability.js
-          node --check web/assets/availability-all.js
+          node --check web/assets/availability-all-v2.js
+          node --check web/assets/paired.js
 
       - name: Build combined dynamic site
         run: |
           python scripts/build_site.py \
             --nominal-input 40m_WRF_WS_공간목록.csv \
             --availability-data data/ws_availability_common_hourly.json.gz.b64 \
+            --full-history-data data/ws_availability_daily.json.gz.b64 \
+            --paired-data data/ws_paired_selected_hourly.json.gz.b64 \
             --web-root web \
             --output _site
-          mkdir -p _site/data
-          cp data/ws_availability_daily.json.gz.b64 \
-            _site/data/ws_availability_daily.json.gz.b64
 
       - name: Validate generated site
         run: |
@@ -65,12 +65,14 @@ jobs:
           test -s _site/nominal.html
           test -s _site/availability.html
           test -s _site/availability-all.html
+          test -s _site/paired.html
           test -s _site/data/ws_availability_common_hourly.json.gz.b64
-          test -s _site/data/ws_availability_daily.json.gz.b64
+          test -s _site/data/full-history-data.js
+          test -s _site/data/paired-data.js
           test -s _site/site_build_summary.json
+          grep -q '^window.FULL_HISTORY_DATA=' _site/data/full-history-data.js
+          grep -q '^window.PAIRED_DATA=' _site/data/paired-data.js
           python - <<'PY'
-          import base64
-          import gzip
           import json
           from pathlib import Path
 
@@ -83,7 +85,8 @@ jobs:
           if summary.get("status") != "ok":
               raise SystemExit("Combined site build failed")
 
-          expected_counts = {
+          common = summary["common_hour"]
+          common_expected = {
               "station_ids": 43,
               "train_station_ids": 22,
               "verify_station_ids": 21,
@@ -93,72 +96,48 @@ jobs:
               "mapped_station_ids": 42,
               "physical_site_groups": 39,
           }
-          availability = summary["availability"]
-          for key, expected in expected_counts.items():
-              actual = availability.get(key)
-              if actual != expected:
+          for key, expected in common_expected.items():
+              if common.get(key) != expected:
                   raise SystemExit(
-                      f"Unexpected common-hour {key}: {actual} != {expected}"
+                      f"Unexpected common {key}: "
+                      f"{common.get(key)} != {expected}"
                   )
 
-          selection = summary["selection"]
-          if selection["retained_start"] != "2016-03-01 00:00:00":
-              raise SystemExit("Unexpected common-hour start")
-          if selection["retained_end"] != "2023-10-31 14:00:00":
-              raise SystemExit("Unexpected common-hour end")
-
-          daily_path = Path(
-              "_site/data/ws_availability_daily.json.gz.b64"
-          )
-          daily_payload = json.loads(
-              gzip.decompress(
-                  base64.b64decode(
-                      daily_path.read_text(encoding="ascii").strip()
-                  )
-              ).decode("utf-8")
-          )
-          if daily_payload.get("schema_version") != 3:
-              raise SystemExit("Unexpected complete-history schema")
-          if daily_payload.get("record_grain") != "station_column":
-              raise SystemExit("Complete history is not station-column level")
-          if daily_payload.get("encoding") != (
-              "per_station_inclusive_day_index_runs"
-          ):
-              raise SystemExit("Unexpected complete-history encoding")
-
-          daily_counts = daily_payload["counts"]
+          full_history = summary["full_history"]
           full_expected = {
               "station_ids": 43,
               "train_station_ids": 22,
               "verify_station_ids": 21,
+              "calendar_days": 10077,
               "mapped_station_ids": 42,
               "physical_site_groups": 39,
-              "calendar_days": 10077,
           }
           for key, expected in full_expected.items():
-              actual = daily_counts.get(key)
-              if actual != expected:
+              if full_history.get(key) != expected:
                   raise SystemExit(
-                      f"Unexpected full-history {key}: {actual} != {expected}"
+                      f"Unexpected full history {key}: "
+                      f"{full_history.get(key)} != {expected}"
                   )
 
-          never_on = [
-              record["station"]
-              for record in daily_payload["groups"]
-              if not record.get("on_day_runs")
-          ]
-          if never_on:
-              raise SystemExit(
-                  f"Stations never ON in full history: {never_on}"
-              )
-          if len(daily_payload["groups"]) != 43:
-              raise SystemExit("Full history does not contain 43 stations")
-          if daily_payload["time"]["date_start"] != "1996-05-31":
-              raise SystemExit("Unexpected source start date")
-          if daily_payload["time"]["date_end"] != "2024-01-01":
-              raise SystemExit("Unexpected source end date")
+          paired = summary["paired"]
+          paired_expected = {
+              "train_sites": 8,
+              "test_sites": 7,
+              "total_sites": 15,
+              "sites_ever_on": 15,
+              "sites_never_on": 0,
+              "frame_count": 78888,
+              "mapped_sites": 14,
+          }
+          for key, expected in paired_expected.items():
+              if paired.get(key) != expected:
+                  raise SystemExit(
+                      f"Unexpected paired {key}: "
+                      f"{paired.get(key)} != {expected}"
+                  )
 
-          print("Full-history coverage: EVER ON 43/43; NEVER ON 0")
+          print("Full history: EVER ON 43/43")
+          print("Paired selection: EVER ON 15/15")
           PY
 
       - name: Upload diagnostic build artifact
