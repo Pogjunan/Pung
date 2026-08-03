@@ -1,0 +1,31 @@
+.timeline-main-row {
+  grid-template-columns: 35px 40px 35px minmax(160px, 1fr) 132px;
+}
+
+#current-date,
+#slider-date {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.common-window-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 9px;
+  border: 1px solid #aab4c0;
+  border-radius: 7px;
+  background: #f7f9fb;
+  color: #334155;
+  font-weight: 600;
+}
+
+@media (max-width: 820px) {
+  .timeline-main-row {
+    grid-template-columns: 32px 38px 32px 1fr;
+  }
+
+  .common-window-label {
+    width: 100%;
+  }
+}
