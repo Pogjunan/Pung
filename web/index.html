@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>40 m 풍속 관측 지도</title>
-  <link rel="stylesheet" href="assets/site.css?v=20260803-common-hourly-1">
+  <link rel="stylesheet" href="assets/site.css?v=20260803-all-ws-1">
 </head>
 <body class="dashboard-body">
   <header class="dashboard-header">
@@ -17,7 +17,10 @@
         명목 관측소 위치
       </button>
       <button type="button" data-view="availability">
-        시간에 따른 실제 풍속 관측여부
+        TRAIN·VERIFY 공통시간
+      </button>
+      <button type="button" data-view="all">
+        전체 WS 기간 (1990~)
       </button>
     </nav>
     <a id="open-current" class="open-current" href="nominal.html"
@@ -26,6 +29,6 @@
   <main class="dashboard-main">
     <iframe id="map-frame" title="풍속 관측 지도"></iframe>
   </main>
-  <script src="assets/dashboard.js?v=20260803-common-hourly-1"></script>
+  <script src="assets/dashboard.js?v=20260803-all-ws-1"></script>
 </body>
 </html>
