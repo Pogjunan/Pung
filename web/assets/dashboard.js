@@ -1,6 +1,6 @@
 "use strict";
 
-const BUILD_VERSION = "20260803-all-ws-1";
+const BUILD_VERSION = "20260803-paired-1";
 
 const views = {
   nominal: {
@@ -14,6 +14,10 @@ const views = {
   all: {
     page: `availability-all.html?v=${BUILD_VERSION}`,
     label: "전체 WS 기간",
+  },
+  paired: {
+    page: `paired.html?v=${BUILD_VERSION}`,
+    label: "Paired Train 8 · Test 7",
   },
 };
 
