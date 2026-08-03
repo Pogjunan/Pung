@@ -1,0 +1,47 @@
+.coverage-ok {
+  color: #137a38;
+  font-weight: 800;
+  background: #e6f5eb !important;
+}
+
+.full-history-note {
+  width: min(350px, calc(100% - 24px));
+}
+
+.full-history-body .availability-marker.is-no-source {
+  transform: scale(0.82);
+  opacity: 0.42;
+  filter: grayscale(1);
+}
+
+.full-history-body .availability-marker.is-no-source .availability-shape {
+  fill: #d5dbe1;
+  fill-opacity: 0.62;
+  stroke: #87919c;
+  stroke-opacity: 0.7;
+}
+
+.popup-no-source {
+  color: #68727d;
+}
+
+.timeline-mode-note {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+@media (max-width: 980px) {
+  .full-history-body .availability-header {
+    width: calc(100% - 24px);
+  }
+
+  .full-history-note {
+    top: 136px;
+    max-height: 150px;
+    overflow: auto;
+  }
+
+  .timeline-mode-note {
+    font-size: 10px;
+  }
+}
