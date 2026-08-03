@@ -4,9 +4,7 @@ from __future__ import annotations
 import argparse
 import base64
 import gzip
-import itertools
 import json
-import math
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 
-KOREAN_LABELS = {
+STATION_KOREAN_LABELS = {
     "chungcheong_boryeong": "충남 보령",
     "chungcheong_dangjin": "충남 당진",
     "chungcheong_seocheon": "충남 서천",
@@ -25,11 +23,13 @@ KOREAN_LABELS = {
     "gyeongsang_uljin": "경북 울진",
     "gyeongsang_yeongdeok": "경북 영덕",
     "gyeongsang_yeongdeok2": "경북 영덕 2",
-    "haengwon": "제주 행원",
-    "ieodo": "남해 이어도",
     "jeju_daejungfarm": "제주 대정",
     "jeju_dongbok": "제주 동복",
     "jeju_gimnyeong": "제주 김녕",
+    "jeju_haengwon": "제주 행원",
+    "jeju_haengwon2": "제주 행원 2",
+    "jeju_haengwon3": "제주 행원 3",
+    "jeju_haengwon4": "제주 행원 4",
     "jeju_hansu": "제주 한수",
     "jeju_ilgwa": "제주 일과",
     "jeju_panpo": "제주 판포",
@@ -46,6 +46,8 @@ KOREAN_LABELS = {
     "kangwon_pyeongchang": "강원 평창",
     "kangwon_yanggu": "강원 양구",
     "kangwon_yeongwol": "강원 영월",
+    "southsea_ieodo": "남해 이어도",
+    "southsea_ieodo2": "남해 이어도 2",
     "southsea_jindo": "남해 진도 보배",
     "southsea_tongyeong": "남해 통영",
     "southsea_yeosu1": "남해 여수 1",
@@ -60,91 +62,43 @@ KOREAN_LABELS = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Aggregate non-null hourly WS observations into a compact "
-            "physical-site daily availability JSON."
+            "Aggregate non-null hourly WS observations into compact, "
+            "station-level daily availability runs."
         )
     )
     parser.add_argument("--observations", type=Path, required=True)
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--default-start", default="2015-01-01")
     return parser.parse_args()
 
 
-def haversine_km(
-    latitude_1: float,
-    longitude_1: float,
-    latitude_2: float,
-    longitude_2: float,
-) -> float:
-    radius_km = 6371.0088
-    phi_1 = math.radians(latitude_1)
-    phi_2 = math.radians(latitude_2)
-    delta_phi = math.radians(latitude_2 - latitude_1)
-    delta_lambda = math.radians(longitude_2 - longitude_1)
-    value = (
-        math.sin(delta_phi / 2.0) ** 2
-        + math.cos(phi_1)
-        * math.cos(phi_2)
-        * math.sin(delta_lambda / 2.0) ** 2
-    )
-    return 2.0 * radius_km * math.asin(math.sqrt(value))
+def inclusive_runs(day_indices: list[int]) -> list[list[int]]:
+    if not day_indices:
+        return []
+    ordered = sorted(set(day_indices))
+    runs: list[list[int]] = []
+    start = ordered[0]
+    end = ordered[0]
+    for day_index in ordered[1:]:
+        if day_index == end + 1:
+            end = day_index
+        else:
+            runs.append([start, end])
+            start = day_index
+            end = day_index
+    runs.append([start, end])
+    return runs
 
 
-def coordinate_summary(
-    group_metadata: pd.DataFrame,
-) -> tuple[float | None, float | None, str, float | None]:
-    coordinates = group_metadata[
-        ["latitude_deg", "longitude_deg"]
-    ].dropna()
-
-    if coordinates.empty:
-        return None, None, "unknown", None
-
-    latitude = float(coordinates["latitude_deg"].mean())
-    longitude = float(coordinates["longitude_deg"].mean())
-    unique_coordinates = coordinates.drop_duplicates()
-
-    max_spread_km = 0.0
-    coordinate_pairs = list(
-        unique_coordinates.itertuples(index=False, name=None)
-    )
-    for (lat_1, lon_1), (lat_2, lon_2) in itertools.combinations(
-        coordinate_pairs, 2
-    ):
-        max_spread_km = max(
-            max_spread_km,
-            haversine_km(lat_1, lon_1, lat_2, lon_2),
-        )
-
-    rule = (
-        "mean_of_member_station_coordinates"
-        if len(unique_coordinates) > 1
-        else "member_station_coordinate"
-    )
-    return latitude, longitude, rule, max_spread_km
-
-
-def coordinate_source(group_metadata: pd.DataFrame) -> str:
-    sources = sorted(
-        group_metadata["coordinate_source"]
-        .dropna()
-        .astype(str)
-        .unique()
-        .tolist()
-    )
-    if sources == ["FLS_HEADER"]:
-        return "FLS_HEADER"
-    if "FLS_HEADER" in sources:
-        return "MIXED_WITH_FLS_HEADER"
-    if sources:
-        return "+".join(sources)
-    return "UNKNOWN"
+def optional_string(row: pd.Series, column: str, default: str) -> str:
+    if column not in row.index or pd.isna(row[column]):
+        return default
+    value = str(row[column]).strip()
+    return value or default
 
 
 def main() -> None:
     args = parse_args()
-
     observations = pd.read_csv(
         args.observations,
         parse_dates=["timestamp_LST_as_stored"],
@@ -152,218 +106,166 @@ def main() -> None:
     metadata = pd.read_csv(args.metadata)
 
     required_observation_columns = {
-        "timestamp_LST_as_stored",
-        "split",
-        "station",
-        "ws_40m_mps",
+        "timestamp_LST_as_stored", "split", "station", "ws_40m_mps"
     }
     required_metadata_columns = {
-        "split",
-        "station",
-        "physical_site_group",
-        "latitude_deg",
-        "longitude_deg",
-        "coordinate_source",
+        "split", "station", "physical_site_group", "latitude_deg",
+        "longitude_deg", "coordinate_source"
     }
-    missing_observation_columns = (
-        required_observation_columns.difference(observations.columns)
+    missing_observation_columns = required_observation_columns.difference(
+        observations.columns
     )
-    missing_metadata_columns = (
-        required_metadata_columns.difference(metadata.columns)
+    missing_metadata_columns = required_metadata_columns.difference(
+        metadata.columns
     )
     if missing_observation_columns:
         raise ValueError(
-            "Missing observation columns: "
-            f"{sorted(missing_observation_columns)}"
+            f"Missing observation columns: {sorted(missing_observation_columns)}"
         )
     if missing_metadata_columns:
         raise ValueError(
-            "Missing metadata columns: "
-            f"{sorted(missing_metadata_columns)}"
+            f"Missing metadata columns: {sorted(missing_metadata_columns)}"
         )
 
     observations = observations.dropna(
         subset=["timestamp_LST_as_stored", "ws_40m_mps"]
     ).copy()
     observations["split"] = observations["split"].astype(str).str.upper()
+    observations["station"] = observations["station"].astype(str).str.strip()
     metadata["split"] = metadata["split"].astype(str).str.upper()
+    metadata["station"] = metadata["station"].astype(str).str.strip()
 
-    observation_groups = observations.merge(
-        metadata[
-            ["split", "station", "physical_site_group"]
-        ],
+    if metadata.duplicated(["split", "station"]).any():
+        duplicates = metadata.loc[
+            metadata.duplicated(["split", "station"], keep=False),
+            ["split", "station"],
+        ].to_dict("records")
+        raise ValueError(f"Duplicate station metadata: {duplicates}")
+
+    observation_keys = observations[["split", "station"]].drop_duplicates()
+    metadata_keys = metadata[["split", "station"]].drop_duplicates()
+    key_check = observation_keys.merge(
+        metadata_keys,
         on=["split", "station"],
         how="left",
-        validate="many_to_one",
+        indicator=True,
     )
-    if observation_groups["physical_site_group"].isna().any():
-        missing_stations = sorted(
-            observation_groups.loc[
-                observation_groups["physical_site_group"].isna(),
-                "station",
-            ]
-            .astype(str)
-            .unique()
-            .tolist()
-        )
+    missing_metadata = key_check.loc[
+        key_check["_merge"] != "both", ["split", "station"]
+    ]
+    if not missing_metadata.empty:
         raise ValueError(
             "Observation stations missing from metadata: "
-            f"{missing_stations}"
+            f"{missing_metadata.to_dict('records')}"
         )
 
-    hourly_group = observation_groups[
-        ["timestamp_LST_as_stored", "split", "physical_site_group"]
+    hourly_station = observations[
+        ["timestamp_LST_as_stored", "split", "station"]
     ].drop_duplicates()
-    hourly_group["date"] = (
-        hourly_group["timestamp_LST_as_stored"].dt.normalize()
+    hourly_station["date"] = (
+        hourly_station["timestamp_LST_as_stored"].dt.normalize()
     )
     daily_counts = (
-        hourly_group.groupby(
-            ["date", "split", "physical_site_group"],
-            as_index=False,
-        )
-        .agg(
-            observed_hours=(
-                "timestamp_LST_as_stored",
-                "nunique",
-            )
-        )
+        hourly_station.groupby(["date", "split", "station"], as_index=False)
+        .agg(observed_hours=("timestamp_LST_as_stored", "nunique"))
     )
 
     start_timestamp = observations["timestamp_LST_as_stored"].min()
     end_timestamp = observations["timestamp_LST_as_stored"].max()
     all_dates = pd.date_range(
-        start_timestamp.normalize(),
-        end_timestamp.normalize(),
-        freq="D",
+        start_timestamp.normalize(), end_timestamp.normalize(), freq="D"
     )
+    first_day = all_dates[0]
 
-    group_order = (
-        metadata[["split", "physical_site_group"]]
+    station_order = (
+        metadata[["split", "station"]]
         .drop_duplicates()
-        .sort_values(["split", "physical_site_group"])
+        .sort_values(["split", "station"])
         .reset_index(drop=True)
     )
-    group_order["id"] = np.arange(len(group_order), dtype=int)
-    group_ids = {
-        (row.split, row.physical_site_group): int(row.id)
-        for row in group_order.itertuples(index=False)
+    station_order["id"] = np.arange(len(station_order), dtype=int)
+    station_ids = {
+        (row.split, row.station): int(row.id)
+        for row in station_order.itertuples(index=False)
     }
-
-    active_days_by_group: dict[int, list[int]] = {
-        int(group_id): [] for group_id in group_order["id"]
+    active_days_by_station: dict[int, list[int]] = {
+        int(station_id): [] for station_id in station_order["id"]
     }
-    first_day = all_dates[0]
     for row in daily_counts.itertuples(index=False):
-        group_id = group_ids[(row.split, row.physical_site_group)]
-        day_index = int((row.date - first_day).days)
-        active_days_by_group[group_id].append(day_index)
-
-    def inclusive_runs(day_indices: list[int]) -> list[list[int]]:
-        if not day_indices:
-            return []
-        ordered = sorted(set(day_indices))
-        runs: list[list[int]] = []
-        start = ordered[0]
-        end = ordered[0]
-        for day_index in ordered[1:]:
-            if day_index == end + 1:
-                end = day_index
-            else:
-                runs.append([start, end])
-                start = day_index
-                end = day_index
-        runs.append([start, end])
-        return runs
-
-    groups: list[dict[str, Any]] = []
-    for group_row in group_order.itertuples(index=False):
-        group_metadata = metadata.loc[
-            (metadata["split"] == group_row.split)
-            & (
-                metadata["physical_site_group"]
-                == group_row.physical_site_group
-            )
-        ].copy()
-        group_availability = hourly_group.loc[
-            (hourly_group["split"] == group_row.split)
-            & (
-                hourly_group["physical_site_group"]
-                == group_row.physical_site_group
-            )
-        ]
-
-        latitude, longitude, rule, spread_km = coordinate_summary(
-            group_metadata
+        station_id = station_ids[(row.split, row.station)]
+        active_days_by_station[station_id].append(
+            int((row.date - first_day).days)
         )
-        groups.append(
+
+    records: list[dict[str, Any]] = []
+    empty_stations: list[str] = []
+    for station_row in station_order.itertuples(index=False):
+        station_metadata = metadata.loc[
+            (metadata["split"] == station_row.split)
+            & (metadata["station"] == station_row.station)
+        ].iloc[0]
+        station_availability = hourly_station.loc[
+            (hourly_station["split"] == station_row.split)
+            & (hourly_station["station"] == station_row.station)
+        ]
+        runs = inclusive_runs(
+            active_days_by_station[int(station_row.id)]
+        )
+        if not runs:
+            empty_stations.append(station_row.station)
+            continue
+        latitude = station_metadata["latitude_deg"]
+        longitude = station_metadata["longitude_deg"]
+        records.append(
             {
-                "id": int(group_row.id),
-                "physical_site_group": (
-                    group_row.physical_site_group
+                "id": int(station_row.id),
+                "station": station_row.station,
+                "physical_site_group": station_metadata["physical_site_group"],
+                "label_ko": STATION_KOREAN_LABELS.get(
+                    station_row.station, station_row.station
                 ),
-                "label_ko": KOREAN_LABELS.get(
-                    group_row.physical_site_group,
-                    group_row.physical_site_group,
-                ),
-                "split": group_row.split,
-                "stations": sorted(
-                    group_metadata["station"].astype(str).tolist()
-                ),
+                "split": station_row.split,
                 "latitude_deg": (
-                    None
-                    if latitude is None
-                    else round(latitude, 6)
+                    None if pd.isna(latitude) else round(float(latitude), 6)
                 ),
                 "longitude_deg": (
-                    None
-                    if longitude is None
-                    else round(longitude, 6)
+                    None if pd.isna(longitude) else round(float(longitude), 6)
                 ),
-                "coordinate_source": coordinate_source(
-                    group_metadata
+                "coordinate_source": optional_string(
+                    station_metadata, "coordinate_source", "UNKNOWN"
                 ),
-                "coordinate_rule": rule,
-                "member_coordinate_max_spread_km": (
-                    None
-                    if spread_km is None
-                    else round(spread_km, 4)
+                "gt_class": optional_string(
+                    station_metadata, "gt_class", "UNKNOWN"
+                ),
+                "source_file": optional_string(
+                    station_metadata, "source_file", "UNKNOWN"
                 ),
                 "observed_unique_hours": int(
-                    group_availability[
-                        "timestamp_LST_as_stored"
-                    ].nunique()
+                    station_availability["timestamp_LST_as_stored"].nunique()
                 ),
-                "observed_days": int(
-                    group_availability["date"].nunique()
-                ),
-                "first_observation": (
-                    group_availability[
-                        "timestamp_LST_as_stored"
-                    ]
-                    .min()
-                    .strftime("%Y-%m-%d %H:%M:%S")
-                ),
-                "last_observation": (
-                    group_availability[
-                        "timestamp_LST_as_stored"
-                    ]
-                    .max()
-                    .strftime("%Y-%m-%d %H:%M:%S")
-                ),
-                "on_day_runs": inclusive_runs(
-                    active_days_by_group[int(group_row.id)]
-                ),
+                "observed_days": int(station_availability["date"].nunique()),
+                "first_observation": station_availability[
+                    "timestamp_LST_as_stored"
+                ].min().strftime("%Y-%m-%d %H:%M:%S"),
+                "last_observation": station_availability[
+                    "timestamp_LST_as_stored"
+                ].max().strftime("%Y-%m-%d %H:%M:%S"),
+                "on_day_runs": runs,
             }
         )
 
+    if empty_stations:
+        raise ValueError(
+            "Metadata stations with no non-null WS observations: "
+            f"{sorted(empty_stations)}"
+        )
+
     payload = {
-        "schema_version": 2,
-        "encoding": "per_group_inclusive_day_index_runs",
+        "schema_version": 3,
+        "encoding": "per_station_inclusive_day_index_runs",
+        "record_grain": "station_column",
         "title_ko": "시간에 따른 실제 풍속 관측여부",
-        "title_en": (
-            "Temporal availability of observed wind speed"
-        ),
+        "title_en": "Temporal availability of observed wind speed",
         "time": {
             "timestamp_field": "timestamp_LST_as_stored",
             "timestamp_semantics": (
@@ -371,82 +273,61 @@ def main() -> None:
                 "canonical timezone not asserted"
             ),
             "granularity": "calendar_day",
-            "source_start": start_timestamp.strftime(
-                "%Y-%m-%d %H:%M:%S"
-            ),
-            "source_end": end_timestamp.strftime(
-                "%Y-%m-%d %H:%M:%S"
-            ),
+            "source_start": start_timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+            "source_end": end_timestamp.strftime("%Y-%m-%d %H:%M:%S"),
             "date_start": all_dates[0].strftime("%Y-%m-%d"),
             "date_end": all_dates[-1].strftime("%Y-%m-%d"),
-            "default_start": max(
-                args.default_start,
-                all_dates[0].strftime("%Y-%m-%d"),
-            ),
+            "default_start": all_dates[0].strftime("%Y-%m-%d"),
             "default_end": all_dates[-1].strftime("%Y-%m-%d"),
+            "playback_mode": "state_change_days",
             "on_rule": (
-                "ON when at least one non-null ws_40m_mps "
-                "observation exists for any member station of "
-                "the physical site group on that stored calendar date"
+                "ON when at least one non-null ws_40m_mps observation "
+                "exists for that station column on the stored calendar date"
             ),
             "zero_mps_is_observed": True,
         },
         "counts": {
-            "raw_non_null_observation_rows": int(
-                len(observations)
-            ),
-            "train_rows": int(
-                (observations["split"] == "TRAIN").sum()
-            ),
-            "verify_rows": int(
-                (observations["split"] == "VERIFY").sum()
-            ),
+            "raw_non_null_observation_rows": int(len(observations)),
+            "train_rows": int((observations["split"] == "TRAIN").sum()),
+            "verify_rows": int((observations["split"] == "VERIFY").sum()),
             "station_ids": int(metadata["station"].nunique()),
+            "train_station_ids": int(
+                metadata.loc[metadata["split"] == "TRAIN", "station"].nunique()
+            ),
+            "verify_station_ids": int(
+                metadata.loc[metadata["split"] == "VERIFY", "station"].nunique()
+            ),
+            "mapped_station_ids": int(
+                metadata[["latitude_deg", "longitude_deg"]]
+                .notna().all(axis=1).sum()
+            ),
             "physical_site_groups": int(
                 metadata["physical_site_group"].nunique()
             ),
-            "mapped_physical_site_groups": int(
-                sum(
-                    group["latitude_deg"] is not None
-                    for group in groups
-                )
-            ),
             "calendar_days": int(len(all_dates)),
-            "group_day_on_records": int(len(daily_counts)),
+            "station_day_on_records": int(len(daily_counts)),
             "on_day_runs": int(
-                sum(len(group["on_day_runs"]) for group in groups)
+                sum(len(record["on_day_runs"]) for record in records)
             ),
         },
-        "groups": groups,
+        "groups": records,
     }
 
     serialized = json.dumps(
-        payload,
-        ensure_ascii=False,
-        separators=(",", ":"),
+        payload, ensure_ascii=False, separators=(",", ":")
     ).encode("utf-8")
     compressed_base64 = base64.b64encode(
         gzip.compress(serialized, compresslevel=9)
     ).decode("ascii")
-
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        compressed_base64,
-        encoding="ascii",
-    )
+    args.output.write_text(compressed_base64, encoding="ascii")
 
     print(f"[OK] {args.output}")
     print(
         f"[INFO] JSON bytes={len(serialized):,}; "
         f"gzip+base64 bytes={len(compressed_base64):,}"
     )
-    print(
-        json.dumps(
-            payload["counts"],
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
+    print(json.dumps(payload["counts"], ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
