@@ -1,10 +1,12 @@
-name: Build and deploy wind station map
+name: Build and deploy wind station maps
 
 on:
   push:
     branches: [main]
     paths:
       - "40m_WRF_WS_공간목록.csv"
+      - "data/**"
+      - "web/**"
       - "scripts/**"
       - "requirements.txt"
       - ".github/workflows/deploy-map.yml"
@@ -35,27 +37,42 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Compile map builder
-        run: python -m py_compile scripts/build_map.py
-
-      - name: Build dynamic map
+      - name: Compile Python builders
         run: |
-          python scripts/build_map.py \
-            --input 40m_WRF_WS_공간목록.csv \
+          python -m py_compile \
+            scripts/build_map.py \
+            scripts/build_site.py \
+            scripts/build_daily_availability.py
+
+      - name: Build combined dynamic site
+        run: |
+          python scripts/build_site.py \
+            --nominal-input 40m_WRF_WS_공간목록.csv \
+            --availability-data data/ws_availability_daily.json.gz.b64 \
+            --web-root web \
             --output _site
 
       - name: Validate generated site
         run: |
           test -s _site/index.html
-          test -s _site/build_summary.json
+          test -s _site/nominal.html
+          test -s _site/availability.html
+          test -s _site/data/ws_availability_daily.json.gz.b64
+          test -s _site/site_build_summary.json
           python - <<'PY'
           import json
           from pathlib import Path
 
-          summary = json.loads(Path("_site/build_summary.json").read_text(encoding="utf-8"))
+          summary = json.loads(
+              Path("_site/site_build_summary.json").read_text(
+                  encoding="utf-8"
+              )
+          )
           print(json.dumps(summary, ensure_ascii=False, indent=2))
-          if summary.get("status") not in {"ok", "placeholder"}:
-              raise SystemExit("Unexpected build status")
+          if summary.get("status") != "ok":
+              raise SystemExit("Combined site build failed")
+          if summary["availability"]["physical_site_groups"] != 39:
+              raise SystemExit("Unexpected physical-site count")
           PY
 
       - name: Upload diagnostic build artifact
