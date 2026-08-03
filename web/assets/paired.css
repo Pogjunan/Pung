@@ -1,0 +1,30 @@
+.coverage-ok {
+  color: #137a38;
+  font-weight: 800;
+  background: #e6f5eb !important;
+}
+
+#active-test {
+  color: var(--verify);
+}
+
+.paired-note {
+  width: min(370px, calc(100% - 24px));
+}
+
+.paired-body .timeline-mode-note {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+@media (max-width: 980px) {
+  .paired-body .availability-header {
+    width: calc(100% - 24px);
+  }
+
+  .paired-note {
+    top: 136px;
+    max-height: 160px;
+    overflow: auto;
+  }
+}
