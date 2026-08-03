@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>시간에 따른 실제 풍속 관측여부</title>
+  <link rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIINfQ3ynhCK29S0jMZp93C7Z+PvRZlGm14="
+        crossorigin="">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body class="availability-body">
+  <div id="availability-map"></div>
+
+  <section class="availability-header" aria-live="polite">
+    <div>
+      <h1>시간에 따른 실제 풍속 관측여부</h1>
+      <p>Temporal availability of observed wind speed</p>
+    </div>
+    <div class="header-stats">
+      <span id="current-date">—</span>
+      <span id="active-total">ON —</span>
+      <span id="active-train">TRAIN —</span>
+      <span id="active-verify">VERIFY —</span>
+    </div>
+  </section>
+
+  <aside class="availability-note">
+    <strong>ON 판정</strong>
+    <span>해당 저장 날짜에 non-null 40 m WS가 1시간 이상 존재</span>
+    <span>0 m/s는 유효 관측으로 ON</span>
+    <span>시간은 datetime_LST 원문 그대로이며 timezone은 확정하지 않음</span>
+    <span id="data-range">자료 범위 —</span>
+    <span id="unmapped-groups">좌표 미확인 —</span>
+  </aside>
+
+  <section class="timeline-panel">
+    <div class="timeline-main-row">
+      <button id="previous-day" type="button" title="이전 날짜">◀</button>
+      <button id="play-toggle" type="button" class="play-button"
+              title="재생 또는 일시정지">▶</button>
+      <button id="next-day" type="button" title="다음 날짜">▶|</button>
+      <input id="date-slider" type="range" min="0" max="0" value="0"
+             step="1" aria-label="날짜">
+      <output id="slider-date">—</output>
+    </div>
+    <div class="timeline-options-row">
+      <label>
+        표시 구간
+        <select id="range-preset">
+          <option value="default">2015년부터 최근 관측일까지</option>
+          <option value="full">전체 자료 기간</option>
+        </select>
+      </label>
+      <div class="speed-control" aria-label="재생 속도">
+        <span>속도</span>
+        <button type="button" data-speed="0.5">0.5×</button>
+        <button type="button" data-speed="1" class="active">1×</button>
+        <button type="button" data-speed="2">2×</button>
+        <button type="button" data-speed="3">3×</button>
+        <button type="button" data-speed="4">4×</button>
+        <button type="button" data-speed="5">5×</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="loading-panel" class="loading-panel">
+    관측 여부 자료를 불러오는 중입니다.
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""></script>
+  <script src="assets/availability.js"></script>
+</body>
+</html>
