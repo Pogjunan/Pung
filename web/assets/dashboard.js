@@ -1,12 +1,14 @@
 "use strict";
 
+const BUILD_VERSION = "20260803-korea-map-1";
+
 const views = {
   nominal: {
     page: "nominal.html",
     label: "명목 관측소 위치",
   },
   availability: {
-    page: "availability.html",
+    page: `availability.html?v=${BUILD_VERSION}`,
     label: "시간에 따른 실제 풍속 관측여부",
   },
 };
