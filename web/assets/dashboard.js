@@ -1,6 +1,6 @@
 "use strict";
 
-const BUILD_VERSION = "20260803-paired-1";
+const BUILD_VERSION = "20260803-jsdelivr-1";
 
 const views = {
   nominal: {
