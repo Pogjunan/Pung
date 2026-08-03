@@ -37,12 +37,14 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Compile Python builders
+      - name: Compile builders and check browser JavaScript
         run: |
           python -m py_compile \
             scripts/build_map.py \
             scripts/build_site.py \
             scripts/build_daily_availability.py
+          node --check web/assets/dashboard.js
+          node --check web/assets/availability.js
 
       - name: Build combined dynamic site
         run: |
@@ -71,8 +73,22 @@ jobs:
           print(json.dumps(summary, ensure_ascii=False, indent=2))
           if summary.get("status") != "ok":
               raise SystemExit("Combined site build failed")
-          if summary["availability"]["physical_site_groups"] != 39:
-              raise SystemExit("Unexpected physical-site count")
+          availability = summary["availability"]
+          expected = {
+              "station_ids": 43,
+              "train_station_ids": 22,
+              "verify_station_ids": 21,
+              "mapped_station_ids": 42,
+              "physical_site_groups": 39,
+          }
+          for key, value in expected.items():
+              if availability.get(key) != value:
+                  raise SystemExit(
+                      f"Unexpected {key}: "
+                      f"{availability.get(key)} != {value}"
+                  )
+          if summary.get("availability_grain") != "station_column":
+              raise SystemExit("Availability is not station-column level")
           PY
 
       - name: Upload diagnostic build artifact
