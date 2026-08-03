@@ -1,7 +1,7 @@
 "use strict";
 
-const DATA_URL = "data/ws_availability_daily.json.gz.b64";
-const DAY_MS = 24 * 60 * 60 * 1000;
+const DATA_URL = "data/ws_availability_common_hourly.json.gz.b64";
+const HOUR_MS = 60 * 60 * 1000;
 const BASE_EVENT_MS = 360;
 const KOREA_BOUNDS = L.latLngBounds(
   [31.55, 124.20],
@@ -21,7 +21,6 @@ const elements = {
   play: document.getElementById("play-toggle"),
   previous: document.getElementById("previous-day"),
   next: document.getElementById("next-day"),
-  rangePreset: document.getElementById("range-preset"),
   speedButtons: [...document.querySelectorAll("[data-speed]")],
 };
 
@@ -31,27 +30,41 @@ const state = {
   markers: new Map(),
   recordById: new Map(),
   currentIndex: 0,
-  rangeStart: 0,
-  rangeEnd: 0,
   timer: null,
   playing: false,
   speed: 1,
-  activeByDay: [],
+  timestamps: [],
+  activeByFrame: [],
+  trainCountByFrame: [],
+  verifyCountByFrame: [],
   changeIndices: [],
   offsets: new Map(),
 };
 
-function isoDayNumber(dateString) {
-  return Math.round(Date.parse(`${dateString}T00:00:00Z`) / DAY_MS);
+function displayTimestamp(value) {
+  return value.slice(0, 16);
 }
 
-function dateAtIndex(index) {
-  const start = isoDayNumber(state.payload.time.date_start);
-  return new Date((start + index) * DAY_MS).toISOString().slice(0, 10);
-}
+function expandTimestamps() {
+  const frameCount = state.payload.counts.selected_frames;
+  state.timestamps = Array(frameCount);
 
-function indexForDate(dateString) {
-  return isoDayNumber(dateString) - isoDayNumber(state.payload.time.date_start);
+  for (const run of state.payload.time.runs) {
+    const startMs = Date.parse(run.start.replace(" ", "T") + "Z");
+    if (!Number.isFinite(startMs)) {
+      throw new Error(`invalid timestamp run start: ${run.start}`);
+    }
+    for (let offset = 0; offset < run.count; offset += 1) {
+      const frameIndex = run.frame_start + offset;
+      state.timestamps[frameIndex] = new Date(
+        startMs + offset * HOUR_MS,
+      ).toISOString().slice(0, 19).replace("T", " ");
+    }
+  }
+
+  if (state.timestamps.some((value) => !value)) {
+    throw new Error("timestamp runs do not cover every retained frame");
+  }
 }
 
 function markerShape(record) {
@@ -108,7 +121,17 @@ function markerIcon(record, observed) {
   });
 }
 
-function popupContent(record, date, observed) {
+function selectedWindowMessage(record) {
+  if (record.selected_on_hours > 0) {
+    return (
+      `${record.selected_first_on} ~ ${record.selected_last_on}`
+      + ` (${record.selected_on_hours.toLocaleString()}시간)`
+    );
+  }
+  return "선택한 TRAIN·VERIFY 공통 시간대에서는 관측 없음";
+}
+
+function popupContent(record, timestamp, observed) {
   const stateLabel = observed ? "ON" : "OFF";
   const coordinate = (
     record.latitude_deg == null || record.longitude_deg == null
@@ -118,30 +141,35 @@ function popupContent(record, date, observed) {
   const offsetApplied = state.offsets.get(record.id);
   const visualOffsetNote = (
     offsetApplied && (offsetApplied.x !== 0 || offsetApplied.y !== 0)
-      ? "<br><small>중복 위치 마커를 구분하기 위해 아이콘만 화면상 소폭 이동했습니다.</small>"
+      ? "<br><small>중복 위치 핀을 구분하기 위해 아이콘만 화면상 소폭 이동했습니다.</small>"
       : ""
   );
+  const noSelectedObservationNote = (
+    record.selected_on_hours === 0
+      ? "<br><strong class='popup-off'>이 station은 원본 전체 파일에는 관측값이 있지만, 선택한 공통 시간대 밖에서만 관측됐습니다.</strong>"
+      : ""
+  );
+
   return `
     <div class="availability-popup">
-      <h3>${record.label_ko}</h3>
+      <h3>${record.label_ko || record.station}</h3>
       <b>station:</b> <code>${record.station}</code><br>
       <b>physical_site_group:</b> <code>${record.physical_site_group}</code><br>
       <b>split:</b> ${record.split}<br>
-      <b>날짜:</b> ${date}<br>
+      <b>시간:</b> ${displayTimestamp(timestamp)}<br>
       <b>관측 상태:</b>
       <strong class="${observed ? "popup-on" : "popup-off"}">${stateLabel}</strong><br>
-      <b>일별 판정:</b> 이 station 열에 non-null WS가 1시간 이상 존재<br>
+      <b>시간별 판정:</b> 업로드 ON/OFF CSV의 값 1이면 ON, 0이면 OFF<br>
       <b>명목 좌표:</b> ${coordinate}<br>
       <b>coordinate_source:</b> ${record.coordinate_source}<br>
-      <b>GT class:</b> ${record.gt_class || "UNKNOWN"}<br>
-      <b>전체 관측시간:</b> ${record.observed_unique_hours.toLocaleString()}시간<br>
-      <b>전체 관측일:</b> ${record.observed_days.toLocaleString()}일<br>
-      <b>최초 관측:</b> ${record.first_observation}<br>
-      <b>최종 관측:</b> ${record.last_observation}<br>
+      <b>공통구간 관측:</b> ${selectedWindowMessage(record)}<br>
+      <b>원본 전체 관측:</b> ${record.full_first_on} ~ ${record.full_last_on}
+      (${record.full_on_hours.toLocaleString()}시간)<br>
       <hr>
       <small>
-        OFF는 현재 날짜에 값이 없다는 의미이며, 이 station 열 전체가 빈 것은 아닙니다.
+        표시 프레임은 TRAIN과 VERIFY에 각각 하나 이상의 ON station이 존재하는 시간만 남겼습니다.
       </small>
+      ${noSelectedObservationNote}
       ${visualOffsetNote}
     </div>
   `;
@@ -181,7 +209,7 @@ function createMap() {
   for (const record of state.payload.groups) {
     state.recordById.set(record.id, record);
     if (record.latitude_deg == null || record.longitude_deg == null) {
-      unmapped.push(`${record.label_ko} (${record.station})`);
+      unmapped.push(`${record.label_ko || record.station} (${record.station})`);
       continue;
     }
 
@@ -189,17 +217,18 @@ function createMap() {
       [record.latitude_deg, record.longitude_deg],
       {
         icon: markerIcon(record, false),
-        title: record.label_ko,
+        title: record.label_ko || record.station,
         riseOnHover: true,
       },
     );
     marker.bindTooltip(
-      `${record.label_ko} · ${record.split}<br>${record.first_observation.slice(0, 10)} ~ ${record.last_observation.slice(0, 10)}`,
+      `${record.label_ko || record.station} · ${record.split}<br>`
+      + `공통구간 ON ${record.selected_on_hours.toLocaleString()}시간`,
       {direction: "top", offset: [0, -10]},
     );
     marker.bindPopup(
-      popupContent(record, state.payload.time.date_start, false),
-      {maxWidth: 430},
+      popupContent(record, state.timestamps[0], false),
+      {maxWidth: 460},
     );
     marker.addTo(record.split === "TRAIN" ? trainLayer : verifyLayer);
     state.markers.set(record.id, marker);
@@ -236,49 +265,55 @@ function createMap() {
   }
 }
 
-function buildDailyIndex() {
-  const dayCount = state.payload.counts.calendar_days;
-  state.activeByDay = Array.from({length: dayCount}, () => []);
-  const changeSet = new Set([0, dayCount - 1]);
+function buildFrameIndex() {
+  const frameCount = state.payload.counts.selected_frames;
+  state.activeByFrame = Array.from({length: frameCount}, () => []);
+  state.trainCountByFrame = new Uint8Array(frameCount);
+  state.verifyCountByFrame = new Uint8Array(frameCount);
 
   for (const record of state.payload.groups) {
-    for (const [startIndex, endIndex] of record.on_day_runs) {
-      changeSet.add(startIndex);
-      if (endIndex + 1 < dayCount) {
-        changeSet.add(endIndex + 1);
-      }
-      for (let index = startIndex; index <= endIndex; index += 1) {
-        state.activeByDay[index].push(record.id);
+    for (const [startIndex, endIndex] of record.selected_on_runs) {
+      for (let frame = startIndex; frame <= endIndex; frame += 1) {
+        state.activeByFrame[frame].push(record.id);
+        if (record.split === "TRAIN") {
+          state.trainCountByFrame[frame] += 1;
+        } else {
+          state.verifyCountByFrame[frame] += 1;
+        }
       }
     }
   }
-  state.changeIndices = [...changeSet].sort((a, b) => a - b);
+
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    if (
+      state.trainCountByFrame[frame] < 1
+      || state.verifyCountByFrame[frame] < 1
+    ) {
+      throw new Error(`frame ${frame} violates TRAIN/VERIFY common-hour rule`);
+    }
+  }
+
+  state.changeIndices = [...state.payload.time.change_indices];
+  if (state.changeIndices[0] !== 0) {
+    state.changeIndices.unshift(0);
+  }
 }
 
-function observedForDay(index) {
-  return new Set(state.activeByDay[index] || []);
+function observedForFrame(index) {
+  return new Set(state.activeByFrame[index] || []);
 }
 
-function updateDay(index) {
-  state.currentIndex = Math.max(state.rangeStart, Math.min(index, state.rangeEnd));
+function updateFrame(index) {
+  const lastIndex = state.payload.counts.selected_frames - 1;
+  state.currentIndex = Math.max(0, Math.min(index, lastIndex));
   elements.slider.value = String(state.currentIndex);
 
-  const date = dateAtIndex(state.currentIndex);
-  const observedRecords = observedForDay(state.currentIndex);
-  let trainActive = 0;
-  let verifyActive = 0;
+  const timestamp = state.timestamps[state.currentIndex];
+  const observedRecords = observedForFrame(state.currentIndex);
   let mappedActive = 0;
 
   for (const record of state.payload.groups) {
     const observed = observedRecords.has(record.id);
-    if (observed) {
-      if (record.split === "TRAIN") {
-        trainActive += 1;
-      } else if (record.split === "VERIFY") {
-        verifyActive += 1;
-      }
-    }
-
     const marker = state.markers.get(record.id);
     if (!marker) {
       continue;
@@ -287,12 +322,14 @@ function updateDay(index) {
       mappedActive += 1;
     }
     marker.setIcon(markerIcon(record, observed));
-    marker.setPopupContent(popupContent(record, date, observed));
+    marker.setPopupContent(popupContent(record, timestamp, observed));
   }
 
+  const trainActive = state.trainCountByFrame[state.currentIndex];
+  const verifyActive = state.verifyCountByFrame[state.currentIndex];
   const totalActive = trainActive + verifyActive;
-  elements.currentDate.textContent = date;
-  elements.sliderDate.textContent = date;
+  elements.currentDate.textContent = displayTimestamp(timestamp);
+  elements.sliderDate.textContent = displayTimestamp(timestamp);
   elements.activeTotal.textContent = (
     `ON ${totalActive}/${state.payload.counts.station_ids}`
     + ` · 지도 ${mappedActive}/${state.payload.counts.mapped_station_ids}`
@@ -330,20 +367,16 @@ function nextChangeIndex(currentIndex) {
       right = middle;
     }
   }
-  while (left < state.changeIndices.length) {
-    const candidate = state.changeIndices[left];
-    if (candidate >= state.rangeStart && candidate <= state.rangeEnd) {
-      return candidate;
-    }
-    left += 1;
-  }
-  return null;
+  return left < state.changeIndices.length
+    ? state.changeIndices[left]
+    : null;
 }
 
 function startPlayback() {
   stopPlayback();
-  if (state.currentIndex >= state.rangeEnd) {
-    updateDay(state.rangeStart);
+  const lastIndex = state.payload.counts.selected_frames - 1;
+  if (state.currentIndex >= lastIndex) {
+    updateFrame(0);
   }
   state.playing = true;
   elements.play.textContent = "Ⅱ";
@@ -354,7 +387,7 @@ function startPlayback() {
       stopPlayback();
       return;
     }
-    updateDay(nextIndex);
+    updateFrame(nextIndex);
   }, frameInterval());
 }
 
@@ -379,36 +412,19 @@ function setSpeed(speed) {
   }
 }
 
-function setRange(preset) {
-  stopPlayback();
-  const lastIndex = state.payload.counts.calendar_days - 1;
-  if (preset === "recent") {
-    state.rangeStart = Math.max(0, indexForDate("2015-01-01"));
-  } else {
-    state.rangeStart = 0;
-  }
-  state.rangeEnd = lastIndex;
-  elements.slider.min = String(state.rangeStart);
-  elements.slider.max = String(state.rangeEnd);
-  updateDay(state.rangeStart);
-}
-
 function bindControls() {
   elements.slider.addEventListener("input", () => {
     stopPlayback();
-    updateDay(Number(elements.slider.value));
+    updateFrame(Number(elements.slider.value));
   });
   elements.play.addEventListener("click", togglePlayback);
   elements.previous.addEventListener("click", () => {
     stopPlayback();
-    updateDay(state.currentIndex - 1);
+    updateFrame(state.currentIndex - 1);
   });
   elements.next.addEventListener("click", () => {
     stopPlayback();
-    updateDay(state.currentIndex + 1);
-  });
-  elements.rangePreset.addEventListener("change", () => {
-    setRange(elements.rangePreset.value);
+    updateFrame(state.currentIndex + 1);
   });
   for (const button of elements.speedButtons) {
     button.addEventListener("click", () => {
@@ -416,10 +432,7 @@ function bindControls() {
     });
   }
   document.addEventListener("keydown", (event) => {
-    if (
-      event.target instanceof HTMLInputElement
-      || event.target instanceof HTMLSelectElement
-    ) {
+    if (event.target instanceof HTMLInputElement) {
       return;
     }
     if (event.code === "Space") {
@@ -427,10 +440,10 @@ function bindControls() {
       togglePlayback();
     } else if (event.code === "ArrowLeft") {
       stopPlayback();
-      updateDay(state.currentIndex - 1);
+      updateFrame(state.currentIndex - 1);
     } else if (event.code === "ArrowRight") {
       stopPlayback();
-      updateDay(state.currentIndex + 1);
+      updateFrame(state.currentIndex + 1);
     }
   });
   window.addEventListener("resize", () => {
@@ -445,54 +458,61 @@ function bindControls() {
   });
 }
 
+async function decodeResponse(response) {
+  const encodedPayload = (await response.text()).trim();
+  const binary = atob(encodedPayload);
+  const compressed = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    compressed[index] = binary.charCodeAt(index);
+  }
+  if (!("DecompressionStream" in window)) {
+    throw new Error("이 브라우저는 gzip DecompressionStream을 지원하지 않습니다");
+  }
+  const stream = new Blob([compressed])
+    .stream()
+    .pipeThrough(new DecompressionStream("gzip"));
+  return new Response(stream).json();
+}
+
 async function initialize() {
   try {
     const response = await fetch(DATA_URL, {cache: "no-store"});
     if (!response.ok) {
       throw new Error(`availability data request failed: ${response.status}`);
     }
-    const encodedPayload = (await response.text()).trim();
-    const binary = atob(encodedPayload);
-    const compressed = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      compressed[index] = binary.charCodeAt(index);
-    }
-    if (!("DecompressionStream" in window)) {
-      throw new Error("이 브라우저는 gzip DecompressionStream을 지원하지 않습니다");
-    }
-    const decompressedStream = new Blob([compressed])
-      .stream()
-      .pipeThrough(new DecompressionStream("gzip"));
-    state.payload = await new Response(decompressedStream).json();
+    state.payload = await decodeResponse(response);
 
     if (
-      state.payload.schema_version !== 3
-      || state.payload.encoding !== "per_station_inclusive_day_index_runs"
+      state.payload.schema_version !== 4
+      || state.payload.record_grain !== "station_column"
+      || state.payload.encoding !== (
+        "filtered_common_hour_sequence_with_per_station_inclusive_frame_runs"
+      )
       || !Array.isArray(state.payload.groups)
       || !state.payload.groups.every(
-        (record) => record.station && Array.isArray(record.on_day_runs),
+        (record) => record.station && Array.isArray(record.selected_on_runs),
       )
     ) {
-      throw new Error("unsupported station-level availability schema");
+      throw new Error("unsupported common-hour availability schema");
     }
 
-    const emptyStations = state.payload.groups
-      .filter((record) => record.on_day_runs.length === 0)
-      .map((record) => record.station);
-    if (emptyStations.length) {
-      throw new Error(`관측 이력이 없는 station이 포함됨: ${emptyStations.join(", ")}`);
-    }
+    expandTimestamps();
+    buildFrameIndex();
 
-    buildDailyIndex();
     elements.dataRange.textContent = (
-      `자료 범위: ${state.payload.time.source_start}`
-      + ` ~ ${state.payload.time.source_end}`
-      + " · 재생은 상태 변화일로 이동"
+      `공통 시간대: ${state.payload.selection.retained_start}`
+      + ` ~ ${state.payload.selection.retained_end}`
+      + ` · ${state.payload.counts.selected_frames.toLocaleString()}시간`
+      + " · 재생은 상태 변화 시점으로 이동"
     );
+
+    elements.slider.min = "0";
+    elements.slider.max = String(state.payload.counts.selected_frames - 1);
+    elements.slider.value = "0";
 
     createMap();
     bindControls();
-    setRange("full");
+    updateFrame(0);
     elements.loading.remove();
   } catch (error) {
     console.error(error);
