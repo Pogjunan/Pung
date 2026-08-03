@@ -1,6 +1,6 @@
 "use strict";
 
-const BUILD_VERSION = "20260803-station-timeline-2";
+const BUILD_VERSION = "20260803-common-hourly-1";
 
 const views = {
   nominal: {
