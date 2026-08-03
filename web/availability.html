@@ -12,8 +12,9 @@
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
     crossorigin=""
   >
-  <link rel="stylesheet" href="assets/site.css?v=20260803-station-timeline-2">
-  <link rel="stylesheet" href="assets/availability-map-fix.css?v=20260803-station-timeline-2">
+  <link rel="stylesheet" href="assets/site.css?v=20260803-common-hourly-1">
+  <link rel="stylesheet" href="assets/availability-map-fix.css?v=20260803-common-hourly-1">
+  <link rel="stylesheet" href="assets/common-hourly.css?v=20260803-common-hourly-1">
 </head>
 <body class="availability-body">
   <div id="availability-map" aria-label="대한민국 풍속 관측 여부 지도"></div>
@@ -32,34 +33,29 @@
   </section>
 
   <aside class="availability-note">
-    <strong>ON 판정</strong>
-    <span>각 station 열에서 해당 날짜에 non-null 40 m WS가 1시간 이상 존재</span>
-    <span>0 m/s는 결측이 아니라 유효 관측으로 ON</span>
-    <span>OFF는 현재 날짜의 결측이며, station 열 전체가 빈 것을 뜻하지 않음</span>
-    <span>재생 버튼은 ON/OFF 상태가 바뀌는 날짜로 이동하며 슬라이더는 일 단위</span>
-    <span>시간은 datetime_LST 원문 그대로이며 timezone은 확정하지 않음</span>
-    <span id="data-range">자료 범위 —</span>
+    <strong>업로드 ON/OFF 자료 기준</strong>
+    <span>각 station 열의 값이 1이면 ON, 0이면 OFF</span>
+    <span>2015-01-01 이후 행 중 TRAIN과 VERIFY가 각각 하나 이상 ON인 시간만 표시</span>
+    <span>따라서 모든 표시 프레임에서 TRAIN ≥ 1, VERIFY ≥ 1</span>
+    <span>시간은 timestamp_LST_as_stored를 이동하지 않고 그대로 사용</span>
+    <span id="data-range">공통 시간대 —</span>
     <span id="unmapped-groups">좌표 미확인 —</span>
   </aside>
 
   <section class="timeline-panel">
     <div class="timeline-main-row">
-      <button id="previous-day" type="button" title="이전 날짜">◀</button>
+      <button id="previous-day" type="button" title="이전 공통 시간">◀</button>
       <button id="play-toggle" type="button" class="play-button"
               title="재생 또는 일시정지">▶</button>
-      <button id="next-day" type="button" title="다음 날짜">▶|</button>
+      <button id="next-day" type="button" title="다음 공통 시간">▶|</button>
       <input id="date-slider" type="range" min="0" max="0" value="0"
-             step="1" aria-label="날짜">
+             step="1" aria-label="TRAIN과 VERIFY 공통 시간 프레임">
       <output id="slider-date">—</output>
     </div>
     <div class="timeline-options-row">
-      <label>
-        표시 구간
-        <select id="range-preset">
-          <option value="full" selected>전체 관측기간 — 모든 station 확인</option>
-          <option value="recent">2015년 이후만 보기</option>
-        </select>
-      </label>
+      <span class="common-window-label">
+        TRAIN·VERIFY 공통 시간대만 표시 · 수동 이동은 시간 프레임 단위 · 재생은 상태 변화 시점 단위
+      </span>
       <div class="speed-control" aria-label="재생 속도">
         <span>속도</span>
         <button type="button" data-speed="0.5">0.5×</button>
@@ -73,14 +69,14 @@
   </section>
 
   <div id="loading-panel" class="loading-panel">
-    관측 여부 자료를 불러오는 중입니다.
+    공통 시간대 ON/OFF 자료를 불러오는 중입니다.
   </div>
 
   <script
     src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9coqIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
     crossorigin=""
   ></script>
-  <script src="assets/availability.js?v=20260803-station-timeline-2"></script>
+  <script src="assets/availability.js?v=20260803-common-hourly-1"></script>
 </body>
 </html>
