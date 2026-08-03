@@ -1,6 +1,6 @@
 "use strict";
 
-const BUILD_VERSION = "20260803-common-hourly-1";
+const BUILD_VERSION = "20260803-all-ws-1";
 
 const views = {
   nominal: {
@@ -9,7 +9,11 @@ const views = {
   },
   availability: {
     page: `availability.html?v=${BUILD_VERSION}`,
-    label: "시간에 따른 실제 풍속 관측여부",
+    label: "TRAIN·VERIFY 공통시간",
+  },
+  all: {
+    page: `availability-all.html?v=${BUILD_VERSION}`,
+    label: "전체 WS 기간",
   },
 };
 
